@@ -4,6 +4,7 @@ const http = require('http');
 const cors = require('cors');
 const { Server } = require('socket.io');
 const connectDB = require('./src/config/db');
+const { getAllowedOrigins } = require('./src/config/origins');
 
 // Import routes
 const authRoutes = require('./src/routes/authRoutes');
@@ -19,10 +20,10 @@ const server = http.createServer(app);
 // Connect to MongoDB
 connectDB();
 
-// Allowed origins — add your Netlify URL here (or set via ALLOWED_ORIGIN env var)
-const allowedOrigins = process.env.ALLOWED_ORIGIN
-    ? process.env.ALLOWED_ORIGIN.split(',').map(o => o.trim())
-    : ['http://localhost:5173', 'http://localhost:3000'];
+// Allowed origins — set CORS_ORIGINS and/or ALLOWED_ORIGIN (comma-separated).
+// Defaults to the local dev origins when neither is set. See src/config/origins.js
+const allowedOrigins = getAllowedOrigins();
+console.log('CORS allowed origins:', allowedOrigins.join(', '));
 
 // Setup WebSocket Server
 const io = new Server(server, {

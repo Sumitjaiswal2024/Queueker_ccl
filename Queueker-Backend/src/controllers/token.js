@@ -1,6 +1,9 @@
+const { subscribeEmailToToken, notifyTokenServing } = require('../services/snsService');
+ // if not already imported
 const Token = require('../models/Token');
 const Queue = require('../models/Queue');
 const mongoose = require('mongoose');
+
 
 // Helper to fully enrich queue for broadcasting
 const getEnrichedQueue = async (queueId) => {
@@ -21,6 +24,21 @@ const getEnrichedQueue = async (queueId) => {
 // @route   POST /api/tokens
 // @access  Public
 exports.generateToken = async (req, res, next) => {
+    // Destructure email from req.body
+    const { queueId, name, phone, email } = req.body;
+    // When creating the token:
+    const token = new Token({
+      queueId,
+      name,
+      phone,
+      email: email || '',
+      tokenNumber: nextTokenNumber
+    });
+    await token.save();
+// If email is provided, trigger SNS subscription:
+    if (email) {
+      subscribeEmailToToken(email, token._id);
+    }
     try {
         const { queueId, name, phone } = req.body;
 
@@ -60,6 +78,24 @@ exports.generateToken = async (req, res, next) => {
 // @route   POST /api/tokens/:queueId/next
 // @access  Private/Admin
 exports.callNextToken = async (req, res, next) => {
+    // Find the next waiting token and update status to 'serving'
+    const nextToken = await Token.findOneAndUpdate(
+      { queueId, status: 'waiting' },
+      { status: 'serving' },
+      { sort: { tokenNumber: 1 }, new: true }
+    );
+
+    if (nextToken) {
+      req.io.emit('queue_updated', queueId);
+
+  // Fetch queue name for friendly notification
+      const queue = await Queue.findById(queueId);
+      if (nextToken.email) {
+        notifyTokenServing(nextToken, queue ? queue.name : 'Queue');
+      }
+
+      return res.status(200).json({ message: 'Next token called', token: nextToken });
+    }
     try {
         const queueId = req.params.queueId;
         const queue = await Queue.findById(queueId);

@@ -1,0 +1,125 @@
+diff --git a/Queueker-Backend/.env.example b/Queueker-Backend/.env.example
+index a79457b..1a16fb7 100644
+--- a/Queueker-Backend/.env.example
++++ b/Queueker-Backend/.env.example
+@@ -2,3 +2,7 @@ PORT=3000
+ MONGODB_URI=mongodb+srv://<username>:<password>@cluster.mongodb.net/queueker?retryWrites=true&w=majority
+ JWT_SECRET=your_super_secret_jwt_key_change_this_in_production
+ NODE_ENV=production
++
++# Comma-separated browser origins allowed by CORS and Socket.IO.
++# CORS_ORIGINS is merged with the legacy ALLOWED_ORIGIN; if both are unset, only localhost is allowed.
++# CORS_ORIGINS=https://dxxxxxxxxxxxx.cloudfront.net,https://queueker-frontend.onrender.com
+diff --git a/Queueker-Backend/server.js b/Queueker-Backend/server.js
+index 11e58c8..7e66200 100644
+--- a/Queueker-Backend/server.js
++++ b/Queueker-Backend/server.js
+@@ -4,6 +4,7 @@ const http = require('http');
+ const cors = require('cors');
+ const { Server } = require('socket.io');
+ const connectDB = require('./src/config/db');
++const { getAllowedOrigins } = require('./src/config/origins');
+ 
+ // Import routes
+ const authRoutes = require('./src/routes/authRoutes');
+@@ -19,10 +20,10 @@ const server = http.createServer(app);
+ // Connect to MongoDB
+ connectDB();
+ 
+-// Allowed origins — add your Netlify URL here (or set via ALLOWED_ORIGIN env var)
+-const allowedOrigins = process.env.ALLOWED_ORIGIN
+-    ? process.env.ALLOWED_ORIGIN.split(',').map(o => o.trim())
+-    : ['http://localhost:5173', 'http://localhost:3000'];
++// Allowed origins — set CORS_ORIGINS and/or ALLOWED_ORIGIN (comma-separated).
++// Defaults to the local dev origins when neither is set. See src/config/origins.js
++const allowedOrigins = getAllowedOrigins();
++console.log('CORS allowed origins:', allowedOrigins.join(', '));
+ 
+ // Setup WebSocket Server
+ const io = new Server(server, {
+diff --git a/Queueker-Backend/src/config/origins.js b/Queueker-Backend/src/config/origins.js
+new file mode 100644
+index 0000000..4f7d672
+--- /dev/null
++++ b/Queueker-Backend/src/config/origins.js
+@@ -0,0 +1,30 @@
++// Allowed browser origins for both Express CORS and the Socket.IO `cors` option.
++//
++// Sources, merged and de-duplicated:
++//   CORS_ORIGINS    comma-separated list (new, preferred)
++//   ALLOWED_ORIGIN  comma-separated list (legacy; Render already uses this)
++// If neither is set, the original local-development defaults apply, so
++// behaviour is unchanged until you set one of them.
++//
++// Matching is exact on purpose (no wildcards such as *.cloudfront.net, which
++// would allow every CloudFront distribution in the world).
++
++const DEFAULT_ORIGINS = ['http://localhost:5173', 'http://localhost:3000'];
++
++// Browsers send the Origin header without a trailing slash, so strip it from
++// configured values to avoid "https://x.cloudfront.net/" never matching.
++function normalize(origin) {
++    return origin.trim().replace(/\/+$/, '');
++}
++
++function parseList(value) {
++    return (value || '').split(',').map(normalize).filter(Boolean);
++}
++
++function getAllowedOrigins(env = process.env) {
++    const merged = [...parseList(env.CORS_ORIGINS), ...parseList(env.ALLOWED_ORIGIN)];
++    const unique = [...new Set(merged)];
++    return unique.length > 0 ? unique : [...DEFAULT_ORIGINS];
++}
++
++module.exports = { getAllowedOrigins, DEFAULT_ORIGINS };
+diff --git a/Queueker-Backend/tests/origins.test.js b/Queueker-Backend/tests/origins.test.js
+new file mode 100644
+index 0000000..cdaaed4
+--- /dev/null
++++ b/Queueker-Backend/tests/origins.test.js
+@@ -0,0 +1,44 @@
++const test = require('node:test');
++const assert = require('node:assert/strict');
++const { getAllowedOrigins, DEFAULT_ORIGINS } = require('../src/config/origins');
++
++test('defaults to local dev origins when nothing is set', () => {
++    assert.deepEqual(getAllowedOrigins({}), DEFAULT_ORIGINS);
++});
++
++test('empty strings fall back to the defaults', () => {
++    assert.deepEqual(getAllowedOrigins({ CORS_ORIGINS: '', ALLOWED_ORIGIN: '  ' }), DEFAULT_ORIGINS);
++});
++
++test('legacy ALLOWED_ORIGIN alone behaves as before', () => {
++    const env = { ALLOWED_ORIGIN: 'https://queueker-frontend.onrender.com' };
++    assert.deepEqual(getAllowedOrigins(env), ['https://queueker-frontend.onrender.com']);
++});
++
++test('CORS_ORIGINS is comma-separated and trimmed', () => {
++    const env = { CORS_ORIGINS: ' https://a.cloudfront.net , http://localhost:5173 ' };
++    assert.deepEqual(getAllowedOrigins(env), ['https://a.cloudfront.net', 'http://localhost:5173']);
++});
++
++test('both variables are merged so adding CloudFront does not drop Render', () => {
++    const env = {
++        ALLOWED_ORIGIN: 'https://queueker-frontend.onrender.com',
++        CORS_ORIGINS: 'https://d111111abcdef8.cloudfront.net'
++    };
++    assert.deepEqual(getAllowedOrigins(env), [
++        'https://d111111abcdef8.cloudfront.net',
++        'https://queueker-frontend.onrender.com'
++    ]);
++});
++
++test('duplicates are removed and trailing slashes stripped', () => {
++    const env = {
++        CORS_ORIGINS: 'https://x.cloudfront.net/,https://x.cloudfront.net',
++        ALLOWED_ORIGIN: 'https://x.cloudfront.net//'
++    };
++    assert.deepEqual(getAllowedOrigins(env), ['https://x.cloudfront.net']);
++});
++
++test('no wildcard expansion: a bare * is kept literally and matches nothing', () => {
++    assert.deepEqual(getAllowedOrigins({ CORS_ORIGINS: '*' }), ['*']);
++});

@@ -4,7 +4,7 @@ const tokenSchema = new mongoose.Schema({
   queueId: { type: String, required: true },
   userId: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
   name: { type: String, required: true },
-  phone: { type: String, required: true },
+  phone: { type: String, default: '' },
   email: { type: String, trim: true, lowercase: true, default: '' },
   tokenNumber: { type: Number, required: true },
   status: {
